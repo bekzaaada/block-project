@@ -15,16 +15,19 @@ class Blockchain:
     def __init__(self):
         self.chain = []
         self.transactions = []
-        self.create_block(proof=1, previous_hash = '0')
         self.nodes = set()
+        self.create_block(proof=1, previous_hash = '0')
         
 
     def create_block(self, proof, previous_hash):
+        merkle_root = self.calculate_merkle_root(self.transactions)
         block = {
             "index": len(self.chain) + 1,
+            "miner": "miner_address",
             "timestamp": str(datetime.datetime.now()),
             "proof": proof,
             "previous_hash": previous_hash,
+            "merkle_root": merkle_root,
             "transactions": self.transactions,
         }
         hash = self.hash(block)
@@ -32,6 +35,39 @@ class Blockchain:
         self.transactions = []
         self.chain.append(block)
         return block
+    
+    def calculate_merkle_root(self, transactions):
+        if len(transactions) == 0:
+            return hashlib.sha256(b'').hexdigest()
+
+        if len(transactions) == 1:
+            return hashlib.sha256(json.dumps(transactions[0]).encode()).hexdigest()
+
+        # Create a list to hold intermediate hashes
+        intermediate_hashes = []
+
+        # Hash each transaction individually and add it to the list
+        for transaction in transactions:
+            transaction_hash = hashlib.sha256(json.dumps(transaction).encode()).hexdigest()
+            intermediate_hashes.append(transaction_hash)
+
+        # Recursively compute the Merkle root from the intermediate hashes
+        return self.compute_merkle_root(intermediate_hashes)
+
+    def compute_merkle_root(self, hashes):
+        if len(hashes) == 1:
+            return hashes[0]
+
+        # Pair up and hash the hashes
+        new_hashes = []
+        for i in range(0, len(hashes), 2):
+            hash1 = hashes[i]
+            hash2 = hashes[i + 1] if i + 1 < len(hashes) else hash1
+            combined_hash = hashlib.sha256(hash1.encode() + hash2.encode()).hexdigest()
+            new_hashes.append(combined_hash)
+
+        # Recursively compute the Merkle root from the new hashes
+        return self.compute_merkle_root(new_hashes)
 
     def get_previous_block(self):
         return self.chain[-1]
@@ -67,11 +103,13 @@ class Blockchain:
             block_index += 1
         return True
 
-    def add_transactions(self, sender, key, changes):
+    def add_transactions(self, sender, recipient, amount, public_key, add_info):
         self.transactions.append({
             "sender": sender,
-            "key": key,
-            "changes": changes
+            "recipient": recipient,
+            "amount": amount,
+            "public_key": public_key,
+            "add_info": add_info
         })
         previous_block = self.get_previous_block()
         return previous_block["index"] + 1
@@ -134,8 +172,9 @@ def mine_block():
     previous_proof = previous_block['proof']
     previous_hash = previous_block["hash"]
     proof = blockchain.proof_of_work(previous_proof)
-    # blockchain.add_transactions(sender=node_address, key="vghjvh", changes="")
-    block = blockchain.create_block(proof, previous_hash)
+    miner_address = "miner_address"
+
+    block = blockchain.create_block(proof, previous_hash, miner_address)
 
     response = {
         "message": "Congratulation, you just mined a block!",
@@ -158,6 +197,12 @@ def get_chain():
 
     return jsonify(response)
 
+@app.route('/generate_keys', methods=['GET'])
+def generate_keys():
+    private_key, public_key = generate_rsa_keys()
+    return jsonify({'private_key': private_key, 'public_key': public_key})
+
+
 @app.route("/is_valid", methods=["GET"])
 def is_valid():
     is_valid =  blockchain.is_chain_valid(blockchain.chain)
@@ -170,49 +215,22 @@ def is_valid():
 @app.route("/add_transaction", methods=['POST'])
 def add_transactions():
     json = request.json
-    transaction_keys = ["sender", "key", "changes"]
+    transaction_keys = ["sender", "recipient", "amount", "public_key", "add_info"]
 
     if not all(key in json for key in transaction_keys):
         return "Some elements of the transaction are missing", 400
 
-    index = blockchain.add_transactions(json["sender"], json["key"], json["changes"])
+    index = blockchain.add_transaction(
+        json["sender"],
+        json["recipient"],
+        json["amount"],
+        json["public_key"],  # Include public key
+        json["add_info"]  # Include additional info
+    )
     response = {
         "message": f"This transaction will be added to Block {index}"
     }
     return jsonify(response), 201
-
-# Decentralisation
-
-# @app.route("/connect_node", methods=['POST'])
-# def connect_node():
-#     json = request.json
-#     nodes = json.get('nodes')
-#     if nodes is None:
-#         return "No Node", 400
-#     for node in nodes:
-#         print(node)
-#         blockchain.add_node(node)
-#     response = {
-#         "message": "All the nodes are now connected. The ViCoin Blockchain now contains the following nodes:",
-#         "total_nodes": list(blockchain.nodes)
-#     }
-#     return jsonify(response), 201
-
-# @app.route("/replace_chain", methods=["GET"])
-# def replace_chain():
-#     is_chain_replaced =  blockchain.replace_chain()
-#     if is_chain_replaced:
-#         response = {'message': "The nodes had different chains so the chain was replaced by the longest one.", "new_chain": blockchain.chain}
-#     else:
-#         response = {'message': "All good. The chain is the largest one.", "actual_chain": blockchain.chain}
-#     return jsonify(response), 200
-
-
-@app.route('/generate_keys', methods=['GET'])
-def generate_keys():
-    private_key, public_key = generate_rsa_keys()
-    return jsonify({'private_key': private_key, 'public_key': public_key})
-
 
 
 app.run(host='0.0.0.0', port=5000, debug=True)
